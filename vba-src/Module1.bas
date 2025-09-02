@@ -313,91 +313,98 @@ End Sub
 
 Option Explicit
 
-' === Import a CSV into a NEW worksheet in THIS workbook (UTF-8 safe) ===
+' === Import CSV into new sheet, name = filename + timestamp ===
 Public Sub ImportCsvToNewSheet()
     Dim fPath As String
-    Dim wbCSV As Workbook
-    Dim srcWS As Worksheet, dstWS As Worksheet
-    Dim srcRng As Range
-    Dim baseName As String, newName As String
-    Dim appScr As Boolean, appCalc As XlCalculation, appEvt As Boolean
-    
-    On Error GoTo CleanFail
-    appScr = Application.ScreenUpdating
-    appCalc = Application.Calculation
-    appEvt = Application.EnableEvents
-    Application.ScreenUpdating = False
-    Application.Calculation = xlCalculationManual
-    Application.EnableEvents = False
-
-    ' 1) Pick a CSV file
     With Application.FileDialog(msoFileDialogFilePicker)
         .Title = "Choose a CSV file to import"
         .AllowMultiSelect = False
         .Filters.Clear
         .Filters.Add "CSV files", "*.csv"
-        If .Show <> -1 Then GoTo CleanExit
+        If .Show <> -1 Then Exit Sub
         fPath = .SelectedItems(1)
     End With
 
-    ' 2) Open the CSV in a temporary workbook with UTF-8 handling
-    ' (Works in modern Excel; falls back gracefully on older versions)
-    Workbooks.OpenText _
-        Filename:=fPath, _
-        Origin:=65001, _
-        DataType:=xlDelimited, _
-        TextQualifier:=xlTextQualifierDoubleQuote, _
-        Comma:=True, _
-        Other:=False
+    Dim ws As Worksheet, newName As String
+    Set ws = ThisWorkbook.Worksheets.Add(After:=Sheets(Sheets.Count))
 
-    Set wbCSV = ActiveWorkbook
-    Set srcWS = wbCSV.Worksheets(1)
-    Set srcRng = srcWS.UsedRange
-    If srcRng Is Nothing Then
-        MsgBox "No data found in CSV.", vbInformation
-        GoTo CleanExit
-    End If
+    ' Build name = file base + timestamp, truncated to 31 chars
+    newName = SanitizeSheetName(GetBaseName(fPath)) & "_" & Format(Now, "yyyy-mm-dd_HHMM")
+    If Len(newName) > 31 Then newName = Left$(newName, 31)
+    newName = MakeUniqueSheetName(ThisWorkbook, newName)
+    ws.Name = newName
 
-    ' 3) Create a new sheet in THIS workbook and name it after the file
-    baseName = GetBaseName(fPath)
-    newName = MakeUniqueSheetName(ThisWorkbook, SanitizeSheetName(baseName))
-    Set dstWS = ThisWorkbook.Worksheets.Add(After:=ThisWorkbook.Sheets(ThisWorkbook.Sheets.Count))
-    dstWS.Name = newName
+    ' Import CSV via QueryTable
+    With ws.QueryTables.Add(Connection:="TEXT;" & fPath, Destination:=ws.Range("A1"))
+        .TextFileParseType = xlDelimited
+        .TextFileCommaDelimiter = True
+        .TextFileQualifier = xlTextQualifierDoubleQuote
+        .AdjustColumnWidth = True
+        .Refresh BackgroundQuery:=False
+        .Delete
+    End With
 
-    ' 4) Copy values (fast, no formatting surprises)
-    dstWS.Range("A1").Resize(srcRng.Rows.Count, srcRng.Columns.Count).Value = srcRng.Value
+    ws.Columns.AutoFit
+    ws.Activate
+    ws.Range("A1").Select
 
-    ' 5) Clean up visuals
-    dstWS.Columns.AutoFit
-    dstWS.Activate
-    dstWS.Range("A1").Select
+    ' Refresh the dropdown list of sheets
+    Call RefreshSheetPicker
 
-    ' 6) Close the temporary CSV workbook (no save)
-    wbCSV.Close SaveChanges:=False
+    ' Preselect this new sheet in the picker
+    ThisWorkbook.Worksheets(INPUT_SHEET).Range(SHEET_PICKER_CELL).Value = ws.Name
 
-    MsgBox "Imported CSV to sheet: " & dstWS.Name, vbInformation
+    MsgBox "Imported CSV to sheet: " & ws.Name, vbInformation
+End Sub
 
-CleanExit:
-    Application.EnableEvents = appEvt
-    Application.Calculation = appCalc
-    Application.ScreenUpdating = appScr
-    Exit Sub
+' === Dropdown support ===
+Public Sub RefreshSheetPicker()
+    Dim wsIn As Worksheet: Set wsIn = ThisWorkbook.Worksheets(INPUT_SHEET)
+    Dim rngList As Range: Set rngList = wsIn.Range(SHEET_LIST_RANGE)
+    Dim ws As Worksheet, i As Long
 
-CleanFail:
-    MsgBox "Import failed: " & Err.Description, vbExclamation
-    On Error Resume Next
-    If Not wbCSV Is Nothing Then wbCSV.Close SaveChanges:=False
-    On Error GoTo 0
-    Resume CleanExit
+    rngList.ClearContents
+    i = 0
+    For Each ws In ThisWorkbook.Worksheets
+        If ws.Visible = xlSheetVisible And ws.Name <> INPUT_SHEET Then
+            i = i + 1
+            rngList.Cells(i, 1).Value = ws.Name
+        End If
+    Next ws
+
+    With wsIn.Range(SHEET_PICKER_CELL).Validation
+        .Delete
+        .Add Type:=xlValidateList, AlertStyle:=xlValidAlertStop, _
+             Operator:=xlBetween, Formula1:="=" & rngList.Address
+        .IgnoreBlank = True
+        .InCellDropdown = True
+        .ShowError = True
+    End With
+
+    wsIn.Range("D1").Value = "Search sheet:"
+    ' optional: wsIn.Columns("H").Hidden = True
 End Sub
 
 ' === Helpers ===
 
 Private Function GetBaseName(ByVal fullPath As String) As String
-    Dim fso As Object
-    Set fso = CreateObject("Scripting.FileSystemObject")
+    Dim fso As Object: Set fso = CreateObject("Scripting.FileSystemObject")
     GetBaseName = fso.GetBaseName(fullPath)
 End Function
+
+
+
+Private Function MakeUniqueSheetName(ByVal wb As Workbook, ByVal base As String) As String
+    Dim nameTry As String, n As Long
+    nameTry = base
+    Do While SheetExists(wb, nameTry)
+        n = n + 1
+        nameTry = Left$(base, 31 - Len(CStr(n)) - 1) & "_" & CStr(n)
+    Loop
+    MakeUniqueSheetName = nameTry
+End Function
+
+
 
 Private Function SanitizeSheetName(ByVal s As String) As String
     ' Remove invalid chars and trim to 31 chars
@@ -412,16 +419,6 @@ Private Function SanitizeSheetName(ByVal s As String) As String
     SanitizeSheetName = s
 End Function
 
-Private Function MakeUniqueSheetName(ByVal wb As Workbook, ByVal base As String) As String
-    Dim nameTry As String
-    Dim n As Long
-    nameTry = base
-    Do While SheetExists(wb, nameTry)
-        n = n + 1
-        nameTry = Left$(base, 31 - Len(CStr(n)) - 1) & "_" & CStr(n)
-    Loop
-    MakeUniqueSheetName = nameTry
-End Function
 
 Private Function SheetExists(ByVal wb As Workbook, ByVal nm As String) As Boolean
     Dim ws As Worksheet
@@ -445,7 +442,7 @@ Public Sub FormatImportedSheet(ByVal ws As Worksheet)
     lastCol = ws.Cells(HEADER_ROW, ws.Columns.Count).End(xlToLeft).Column
 
     Dim col As Long
-    Dim hdr As String
+    Dim hdr As String, hdrL As String
 
     ' 1) Default: turn OFF wrap for all columns, light tidy
     ws.Cells.WrapText = False
@@ -453,27 +450,29 @@ Public Sub FormatImportedSheet(ByVal ws As Worksheet)
 
     ' 2) Walk headers and selectively enable wrapping + widths
     For col = 1 To lastCol
-        hdr = Trim$(CStr(ws.Cells(HEADER_ROW, col).Value2))
+        hdr = CStr(ws.Cells(HEADER_ROW, col).Value2)
+        hdrL = LCase$(Trim$(hdr))
 
         ' Big-text columns: wrap + wider column
-        If LCase$(hdr) = "description" _
-           Or LCase$(hdr) = "expected result" _
+        If hdrL = "description" _
+           Or hdrL = "expected result" _
            Or EndsWithDetails(hdr) Then
 
             ws.Columns(col).WrapText = True
-            ws.Columns(col).ColumnWidth = 50   ' ~50 characters wide (adjust if you like)
+            ws.Columns(col).ColumnWidth = 50   ' adjust as you like
 
         ' Titles/short fields: keep unwrapped, narrower width
-        ElseIf LCase$(hdr) = "title" _
-           Or hdr Like "Step #"
-           Or hdr Like "Step *" _
-           Or LCase$(hdr) = "test id" Then
+        ElseIf hdrL = "title" _
+            Or hdrL = "test id" _
+            Or hdrL Like "step #" _
+            Or hdrL Like "step ##" _
+            Or hdrL Like "step ###" Then
 
-            ws.Columns(col).WrapText = False
-            ws.Columns(col).ColumnWidth = 20   ' title-ish width
+                ws.Columns(col).WrapText = False
+                ws.C4olumns(col).ColumnWidth = 20
 
         Else
-            ' Everything else: reasonable auto width
+            ' Everything else: reasonable width
             ws.Columns(col).ColumnWidth = 18
         End If
     Next col
@@ -485,7 +484,9 @@ Public Sub FormatImportedSheet(ByVal ws As Worksheet)
     End With
 
     ' 4) AutoFilter (optional)
-    If Not ws.AutoFilterMode Then ws.Range(ws.Cells(HEADER_ROW, 1), ws.Cells(HEADER_ROW, lastCol)).AutoFilter
+    If Not ws.AutoFilterMode Then
+        ws.Range(ws.Cells(HEADER_ROW, 1), ws.Cells(HEADER_ROW, lastCol)).AutoFilter
+    End If
 
     ' 5) Now that widths & wrap are set, autosize row heights so wrapped text shows fully
     ws.Rows.AutoFit
@@ -496,11 +497,11 @@ Public Sub FormatImportedSheet(ByVal ws As Worksheet)
     ActiveWindow.FreezePanes = True
 End Sub
 
-' Helper: does a header end with "Details" (case-insensitive)?
 Private Function EndsWithDetails(ByVal s As String) As Boolean
     s = LCase$(Trim$(s))
     EndsWithDetails = (Right$(s, 7) = "details")
 End Function
+
 
 ' Exports all VBA components (Modules/Classes/Forms) to a folder next to the workbook.
 Public Sub ExportAllVBA()
@@ -533,3 +534,5 @@ Private Function SafeName(ByVal s As String) As String
     Next
     SafeName = s
 End Function
+
+
