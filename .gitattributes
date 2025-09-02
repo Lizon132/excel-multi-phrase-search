@@ -1,0 +1,8 @@
+# Normalize VBA text modules
+*.bas text eol=lf
+*.cls text eol=lf
+*.frm text eol=lf
+README.md text eol=lf
+
+# Binary files (forms carry .frx companions)
+*.frx binary

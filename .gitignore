@@ -1,0 +1,13 @@
+# Excel temp/lock/backup files
+~$*.xls*
+*.tmp
+*.bak
+
+# Ignore compiled workbook artifacts (keep source only)
+*.xlsm
+*.xlsb
+
+# IDE/editor/system noise
+.vscode/
+.DS_Store
+Thumbs.db
