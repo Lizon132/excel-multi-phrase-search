@@ -1,4 +1,4 @@
-Public Sub ImportCsvToNewSheet_Safe()
+Public Sub ImportCsvToTestDocs()
     Dim fPath As String
     With Application.FileDialog(msoFileDialogFilePicker)
         .Title = "Choose a CSV file to import"
@@ -10,32 +10,40 @@ Public Sub ImportCsvToNewSheet_Safe()
     End With
 
     Dim wbCSV As Workbook, src As Worksheet
-    Dim dst As Worksheet, nm As String
+    Dim dst As Worksheet
 
     Application.ScreenUpdating = False
 
-    ' Open the CSV in its own temp workbook (Excel handles BOM/quotes well here)
+    ' Open the CSV in a temp workbook
     Set wbCSV = Workbooks.Open(Filename:=fPath, Local:=True)
     Set src = wbCSV.Worksheets(1)
 
-    ' New sheet in THIS workbook, name with timestamp
-    nm = MakeUniqueSheetName(ThisWorkbook, _
-         SanitizeSheetName(GetBaseName(fPath) & "_" & Format(Now, "yyyy-mm-dd_HHMM")))
-    Set dst = ThisWorkbook.Worksheets.Add(After:=Sheets(Sheets.Count))
-    dst.Name = nm
+    ' Use the existing "Test Docs" sheet
+    On Error Resume Next
+    Set dst = ThisWorkbook.Worksheets("Test Docs")
+    On Error GoTo 0
+    If dst Is Nothing Then
+        MsgBox "Sheet 'Test Docs' not found!", vbExclamation
+        wbCSV.Close SaveChanges:=False
+        Exit Sub
+    End If
+
+    ' Clear old contents before copying
+    dst.Cells.Clear
 
     ' Copy values (and headers) exactly as Excel parsed them
     dst.Range("A1").Resize(src.UsedRange.Rows.Count, src.UsedRange.Columns.Count).Value = src.UsedRange.Value
 
-    ' Optional: strip BOM (zero-width no-break space) from first cell if present
+    ' Clean possible BOM in A1
     dst.Range("A1").Value = Replace(CStr(dst.Range("A1").Value), ChrW(&HFEFF), "")
 
-    ' Tidy
+    ' Auto-fit columns
     dst.Columns.AutoFit
+
+    ' Close temp CSV
     wbCSV.Close SaveChanges:=False
 
     Application.ScreenUpdating = True
 
-    ' OPTIONAL: if you have a formatter
-    ' FormatImportedSheet dst
+    MsgBox "CSV imported into sheet 'Test Docs'.", vbInformation
 End Sub
