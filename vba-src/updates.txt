@@ -1,0 +1,41 @@
+Public Sub ImportCsvToNewSheet_Safe()
+    Dim fPath As String
+    With Application.FileDialog(msoFileDialogFilePicker)
+        .Title = "Choose a CSV file to import"
+        .AllowMultiSelect = False
+        .Filters.Clear
+        .Filters.Add "CSV files", "*.csv"
+        If .Show <> -1 Then Exit Sub
+        fPath = .SelectedItems(1)
+    End With
+
+    Dim wbCSV As Workbook, src As Worksheet
+    Dim dst As Worksheet, nm As String
+
+    Application.ScreenUpdating = False
+
+    ' Open the CSV in its own temp workbook (Excel handles BOM/quotes well here)
+    Set wbCSV = Workbooks.Open(Filename:=fPath, Local:=True)
+    Set src = wbCSV.Worksheets(1)
+
+    ' New sheet in THIS workbook, name with timestamp
+    nm = MakeUniqueSheetName(ThisWorkbook, _
+         SanitizeSheetName(GetBaseName(fPath) & "_" & Format(Now, "yyyy-mm-dd_HHMM")))
+    Set dst = ThisWorkbook.Worksheets.Add(After:=Sheets(Sheets.Count))
+    dst.Name = nm
+
+    ' Copy values (and headers) exactly as Excel parsed them
+    dst.Range("A1").Resize(src.UsedRange.Rows.Count, src.UsedRange.Columns.Count).Value = src.UsedRange.Value
+
+    ' Optional: strip BOM (zero-width no-break space) from first cell if present
+    dst.Range("A1").Value = Replace(CStr(dst.Range("A1").Value), ChrW(&HFEFF), "")
+
+    ' Tidy
+    dst.Columns.AutoFit
+    wbCSV.Close SaveChanges:=False
+
+    Application.ScreenUpdating = True
+
+    ' OPTIONAL: if you have a formatter
+    ' FormatImportedSheet dst
+End Sub
