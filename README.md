@@ -51,7 +51,7 @@ Run the included `ExportAllVBA` macro to export all VBA components back into `vb
   - Writes scores to **SM column (A)** in *Test Docs* sheet.
   - Applies a red → green gradient to visualize match strength.
 - Added **filter/visibility guard** so Python search always works on the full dataset (ignores prior Excel filters).
-- Added ability to configure **Python.exe path** and **script path** from the **Instructions sheet** (cells B3 and B4).
+- Added ability to configure **Python.exe path** and **script path** from the **Instructions sheet** (cells B24 and B26).
   - Falls back to constants if fields are left blank.
   - Optional **Browse** buttons to make path selection user-friendly.
 
