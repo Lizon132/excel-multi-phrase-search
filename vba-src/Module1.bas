@@ -2,9 +2,9 @@ Attribute VB_Name = "Module1"
 Option Explicit
 
 ' ====== CONFIG ======
-Private Const INPUT_SHEET As String = "Sheet1"     ' where the search terms live
+Private Const INPUT_SHEET As String = "Instructions"     ' where the search terms live
 Private Const INPUT_CELL As String = "B1"          ' comma-separated terms
-Private Const DATA_SHEET As String = "Sheet2"      ' where the data lives (expanded cases)
+Private Const DATA_SHEET As String = "Test Docs"      ' where the data lives (expanded cases)
 ' ====================
 
 ' Optional: set to True to match whole words only (requires regex)
@@ -58,7 +58,7 @@ Public Sub MultiPhraseSearch()
     
     ' Scan rows and cells; highlight substrings; hide rows without any hits
     hadAnyMatch = False
-    For Each r In dataRng.Rows
+    For Each r In dataRng.rows
         rowHadMatch = False
         
         For Each c In r.Cells
@@ -246,75 +246,7 @@ Private Function RandomNiceColor() As Long
     RandomNiceColor = RGB(r, g, b)
 End Function
 
-
-
-' Quick reset button: clears highlights and shows all rows on DATA_SHEET
-Public Sub ResetSearch()
-    Dim wsData As Worksheet, rng As Range
-    On Error GoTo Done
-    Application.ScreenUpdating = False
-    
-    Set wsData = ThisWorkbook.Worksheets(DATA_SHEET)
-    Set rng = wsData.UsedRange
-    If Not rng Is Nothing Then
-        Call ClearSearchFormatting(wsData, rng)
-        rng.EntireRow.Hidden = False
-    End If
-
-Done:
-    Application.ScreenUpdating = True
-End Sub
-
-
-' One-time (or anytime) import: pick your expanded file (CSV or XLSX) and load it into Sheet2
-' - If CSV: it will use QueryTables to import
-' - If XLSX: it will open the file and copy the first sheet into Sheet2
-Public Sub ImportExpandedDataToSheet2()
-    Dim fd As FileDialog
-    Dim fPath As String
-    Dim ws As Worksheet
-    
-    Set fd = Application.FileDialog(msoFileDialogFilePicker)
-    With fd
-        .Title = "Choose expanded test cases file (CSV or XLSX)"
-        .AllowMultiSelect = False
-        .Filters.Clear
-        .Filters.Add "Excel/CSV", "*.xlsx;*.xls;*.csv", 1
-        If .Show <> -1 Then Exit Sub
-        fPath = .SelectedItems(1)
-    End With
-    
-    Set ws = ThisWorkbook.Worksheets(DATA_SHEET)
-    ws.Cells.Clear
-    
-    If LCase$(Right$(fPath, 4)) = ".csv" Then
-        ' Import CSV into Sheet2
-        With ws.QueryTables.Add(Connection:="TEXT;" & fPath, Destination:=ws.Range("A1"))
-            .TextFileParseType = xlDelimited
-            .TextFileCommaDelimiter = True
-            .TextFileOtherDelimiter = False
-            .TextFileColumnDataTypes = Array(1)
-            .AdjustColumnWidth = True
-            .Refresh BackgroundQuery:=False
-        End With
-    Else
-        ' Import first worksheet from the selected workbook
-        Dim wb As Workbook
-        Dim src As Worksheet
-        Set wb = Application.Workbooks.Open(fPath, ReadOnly:=True)
-        Set src = wb.Worksheets(1)
-        src.UsedRange.Copy ws.Range("A1")
-        wb.Close SaveChanges:=False
-        ws.Columns.AutoFit
-    End If
-    Call FormatImportedSheet(ws)
-    MsgBox "Data imported to " & DATA_SHEET & ".", vbInformation
-End Sub
-
-Option Explicit
-
-' === Import CSV into new sheet, name = filename + timestamp ===
-Public Sub ImportCsvToNewSheet()
+Public Sub ImportCsvToTestDocs()
     Dim fPath As String
     With Application.FileDialog(msoFileDialogFilePicker)
         .Title = "Choose a CSV file to import"
@@ -325,37 +257,56 @@ Public Sub ImportCsvToNewSheet()
         fPath = .SelectedItems(1)
     End With
 
-    Dim ws As Worksheet, newName As String
-    Set ws = ThisWorkbook.Worksheets.Add(After:=Sheets(Sheets.Count))
+    Dim wbCSV As Workbook, src As Worksheet
+    Dim dst As Worksheet
+    Application.ScreenUpdating = False
 
-    ' Build name = file base + timestamp, truncated to 31 chars
-    newName = SanitizeSheetName(GetBaseName(fPath)) & "_" & Format(Now, "yyyy-mm-dd_HHMM")
-    If Len(newName) > 31 Then newName = Left$(newName, 31)
-    newName = MakeUniqueSheetName(ThisWorkbook, newName)
-    ws.Name = newName
+    ' Open the CSV in a temp workbook (robust parsing)
+    Set wbCSV = Workbooks.Open(Filename:=fPath, Local:=True)
+    Set src = wbCSV.Worksheets(1)
 
-    ' Import CSV via QueryTable
-    With ws.QueryTables.Add(Connection:="TEXT;" & fPath, Destination:=ws.Range("A1"))
-        .TextFileParseType = xlDelimited
-        .TextFileCommaDelimiter = True
-        .TextFileQualifier = xlTextQualifierDoubleQuote
-        .AdjustColumnWidth = True
-        .Refresh BackgroundQuery:=False
-        .Delete
-    End With
+    ' Use existing "Test Docs" sheet
+    On Error Resume Next
+    Set dst = ThisWorkbook.Worksheets("Test Docs")
+    On Error GoTo 0
+    If dst Is Nothing Then
+        MsgBox "Sheet 'Test Docs' not found.", vbExclamation
+        wbCSV.Close SaveChanges:=False
+        Exit Sub
+    End If
 
-    ws.Columns.AutoFit
-    ws.Activate
-    ws.Range("A1").Select
+    ' Clear old contents and ensure SM column is in A
+    dst.Cells.Clear
+    EnsureSMColumn dst, "SM"   ' inserts column A + header if needed
 
-    ' Refresh the dropdown list of sheets
-    Call RefreshSheetPicker
+    ' Paste CSV starting at B1 (since A is reserved for SM)
+    Dim rowsCount As Long, colsCount As Long
+    rowsCount = src.UsedRange.rows.Count
+    colsCount = src.UsedRange.Columns.Count
+    dst.Range("B1").Resize(rowsCount, colsCount).Value = src.UsedRange.Value
 
-    ' Preselect this new sheet in the picker
-    ThisWorkbook.Worksheets(INPUT_SHEET).Range(SHEET_PICKER_CELL).Value = ws.Name
+    ' Clean possible BOM in the top-left header
+    dst.Range("B1").Value = Replace(CStr(dst.Range("B1").Value), ChrW(&HFEFF), "")
 
-    MsgBox "Imported CSV to sheet: " & ws.Name, vbInformation
+    ' Autofit columns and apply SM formatting
+    dst.Columns.AutoFit
+    ApplySMFormatting dst, headerRow:=1, smCol:=1   ' 1 = column A
+
+    wbCSV.Close SaveChanges:=False
+    Application.ScreenUpdating = True
+
+    MsgBox "CSV imported into 'Test Docs' with SM column ready.", vbInformation
 End Sub
+
+
+Private Sub EnsureSMColumn(ByVal ws As Worksheet, ByVal headerText As String)
+    ' Inserts column A with the given header, unless A1 already equals that header.
+    If LCase$(CStr(ws.Cells(1, 1).Value)) <> LCase$(headerText) Then
+        ws.Columns(1).Insert Shift:=xlToRight
+        ws.Cells(1, 1).Value = headerText
+    End If
+End Sub
+
 
 ' === Dropdown support ===
 Public Sub RefreshSheetPicker()
@@ -446,7 +397,7 @@ Public Sub FormatImportedSheet(ByVal ws As Worksheet)
 
     ' 1) Default: turn OFF wrap for all columns, light tidy
     ws.Cells.WrapText = False
-    ws.Rows.RowHeight = ws.StandardHeight
+    ws.rows.RowHeight = ws.StandardHeight
 
     ' 2) Walk headers and selectively enable wrapping + widths
     For col = 1 To lastCol
@@ -478,7 +429,7 @@ Public Sub FormatImportedSheet(ByVal ws As Worksheet)
     Next col
 
     ' 3) Make header bold and a touch of shading (optional)
-    With ws.Rows(HEADER_ROW)
+    With ws.rows(HEADER_ROW)
         .Font.Bold = True
         .Interior.Color = RGB(242, 242, 242)
     End With
@@ -489,7 +440,7 @@ Public Sub FormatImportedSheet(ByVal ws As Worksheet)
     End If
 
     ' 5) Now that widths & wrap are set, autosize row heights so wrapped text shows fully
-    ws.Rows.AutoFit
+    ws.rows.AutoFit
 
     ' 6) Freeze header row (optional)
     ws.Activate
@@ -536,3 +487,308 @@ Private Function SafeName(ByVal s As String) As String
 End Function
 
 
+Sub RunSemanticMatching()
+    Dim sh As Object
+    Dim py As String, script As String, wbPath As String, assertion As String
+    Dim inner As String, cmd As String
+
+    ' Raw paths (UNQUOTED here)
+    py = "C:\Users\chris\AppData\Local\Programs\Python\Python312\python.exe"
+    script = "C:\Users\chris\Documents\excel-multi-phrase-search\semanticmatching.py"
+    wbPath = ThisWorkbook.FullName
+
+    ' Get assertion text
+    assertion = Sheets("Sheet1").Range("B6").Value   ' <-- change if needed
+
+    ' Build the inner command (quoted piece by piece)
+    inner = QuoteArg(py) & " " & _
+            QuoteArg(script) & " " & _
+            QuoteArg(wbPath) & " " & _
+            QuoteArg(assertion)
+
+    ' Run via cmd so we can keep the window open for debugging
+    cmd = Environ$("ComSpec") & " /k " & QuoteArg(inner)
+
+    ' Show exactly what we’re about to run (for debugging)
+    Debug.Print cmd
+    MsgBox cmd, vbInformation, "Command being run"
+
+    Set sh = CreateObject("WScript.Shell")
+    sh.Run cmd, 1, True
+End Sub
+
+
+
+' Button handler: send query to Python, then recolor SM column on DATA_SHEET
+Public Sub SearchWithPython()
+    Dim wsInstr As Worksheet, wsData As Worksheet
+    Dim query As String
+    Dim ok As Boolean
+    
+    Dim pyExeChk As String, pyScriptChk As String
+    pyExeChk = GetPythonExePath()
+    pyScriptChk = GetPyScriptPath()
+
+    On Error GoTo Fail
+
+    Set wsInstr = ThisWorkbook.Worksheets(INPUT_SHEET)
+    Set wsData = ThisWorkbook.Worksheets(DATA_SHEET)
+    
+    ' NEW: clear filters/hidden rows so Python sees everything
+    EnsureAllRowsVisibleUnfiltered wsData
+
+    query = Trim$(CStr(wsInstr.Range(INPUT_CELL).Value))
+    If Len(query) = 0 Then
+        MsgBox "Enter search text in " & INPUT_SHEET & "!" & INPUT_CELL, vbInformation
+        Exit Sub
+    End If
+
+    ' Optional sanity checks so we fail fast if paths are wrong
+    If Len(pyExeChk) = 0 Or Dir(pyExeChk) = "" Then
+        MsgBox "Python.exe path is not set or invalid. Set it on the Instructions sheet (B3).", vbExclamation
+        Exit Sub
+    End If
+    If Len(pyScriptChk) = 0 Or Dir(pyScriptChk) = "" Then
+        MsgBox "Semantic script path is not set or invalid. Set it on the Instructions sheet (B4).", vbExclamation
+        Exit Sub
+    End If
+
+    ' Call your Python script. It should write SM values to column A on DATA_SHEET.
+    ok = RunPythonSemanticSimple(query, ThisWorkbook.FullName, DATA_SHEET)
+    If Not ok Then GoTo Fail
+
+    ' Re-apply the SM gradient on column A
+    ApplySMFormatting wsData, headerRow:=1, smCol:=1
+
+    MsgBox "Semantic search complete. SM values updated.", vbInformation
+    Exit Sub
+
+Fail:
+    MsgBox "Search failed: " & Err.Description, vbExclamation
+End Sub
+Private Function RunPythonSemanticSimple(ByVal query As String, _
+                                         ByVal workbookPath As String, _
+                                         ByVal sheetName As String) As Boolean
+    Dim sh As Object, cmd As String, rc As Long
+    Dim pyExe As String, pyScript As String
+
+    pyExe = GetPythonExePath()
+    pyScript = GetPyScriptPath()
+
+    ' Validate + helpful errors
+    If Len(pyExe) = 0 Then
+        MsgBox "Please set the Python.exe path on the Instructions sheet (B3).", vbExclamation
+        RunPythonSemanticSimple = False: Exit Function
+    End If
+    If Dir(pyExe) = "" Then
+        MsgBox "Python.exe not found: " & pyExe, vbExclamation
+        RunPythonSemanticSimple = False: Exit Function
+    End If
+    If Len(pyScript) = 0 Then
+        MsgBox "Please set the semantic script path on the Instructions sheet (B4).", vbExclamation
+        RunPythonSemanticSimple = False: Exit Function
+    End If
+    If Dir(pyScript) = "" Then
+        MsgBox "Script not found: " & pyScript, vbExclamation
+        RunPythonSemanticSimple = False: Exit Function
+    End If
+
+    Set sh = CreateObject("WScript.Shell")
+
+    cmd = """" & pyExe & """ " & _
+          """" & pyScript & """ " & _
+          "--query " & QuoteArg(query) & " " & _
+          "--workbook " & QuoteArg(workbookPath) & " " & _
+          "--sheet " & QuoteArg(sheetName)
+
+    rc = sh.Run(cmd, 0, True)  ' 0=hidden, True=wait
+    RunPythonSemanticSimple = (rc = 0)
+End Function
+
+Private Function QuoteArg(ByVal s As String) As String
+    QuoteArg = """" & Replace(s, """", "\""") & """"
+End Function
+
+Private Function ExportSheetToTempCsv(ByVal ws As Worksheet) As String
+    Dim fso As Object, tmp As String, arr As Variant
+    Dim rng As Range, rows As Long, cols As Long
+    Dim r As Long, c As Long
+    Dim fh As Integer, line As String
+
+    Set rng = ws.UsedRange
+    If rng Is Nothing Then Err.Raise 5, , "No data to export."
+
+    rows = rng.rows.Count: cols = rng.Columns.Count
+    arr = rng.Value  ' 2D variant
+
+    tmp = BuildTempPath("sheet_export_", ".csv")
+    fh = FreeFile
+    Open tmp For Output As #fh
+
+    For r = 1 To rows
+        line = ""
+        For c = 1 To cols
+            line = line & IIf(c > 1, ",", "") & CsvEscape(arr(r, c))
+        Next c
+        Print #fh, line
+    Next r
+
+    Close #fh
+    ExportSheetToTempCsv = tmp
+End Function
+
+Private Function CsvEscape(ByVal v As Variant) As String
+    Dim s As String
+    s = CStr(v)
+    If InStr(s, """") > 0 Or InStr(s, ",") > 0 Or InStr(s, vbLf) > 0 Or InStr(s, vbCr) > 0 Then
+        s = """" & Replace(s, """", """""") & """"
+    End If
+    CsvEscape = s
+End Function
+
+Private Function BuildTempPath(ByVal prefix As String, ByVal ext As String) As String
+    Dim folder As String
+    folder = Environ$("TEMP")
+    If Right$(folder, 1) <> "\" Then folder = folder & "\"
+    BuildTempPath = folder & prefix & Format(Now, "yyyymmdd_hhnnss_") & CLng(Rnd * 1000000#) & ext
+End Function
+Private Sub ApplySMFormatting(ByVal ws As Worksheet, _
+                              Optional ByVal headerRow As Long = 1, _
+                              Optional ByVal smCol As Long = 1)
+    Dim lastRow As Long
+    lastRow = ws.Cells(ws.rows.Count, smCol).End(xlUp).Row
+    If lastRow <= headerRow Then Exit Sub
+
+    Dim rng As Range
+    Set rng = ws.Range(ws.Cells(headerRow + 1, smCol), ws.Cells(lastRow, smCol))
+
+    ' Clear prior rules
+    rng.FormatConditions.Delete
+
+    ' 1) Stop-if-true rule for blanks / non-numbers / out-of-range (no format)
+    Dim colLetter As String
+    colLetter = Split(ws.Cells(1, smCol).Address(True, False), "$")(0)
+    Dim formulaStop As String
+    formulaStop = "=OR(" & colLetter & (headerRow + 1) & "=""""," & _
+                       "NOT(ISNUMBER(" & colLetter & (headerRow + 1) & "))," & _
+                       colLetter & (headerRow + 1) & "<0," & _
+                       colLetter & (headerRow + 1) & ">1)"
+    With rng.FormatConditions.Add(Type:=xlExpression, Formula1:=formulaStop)
+        .StopIfTrue = True
+    End With
+
+    ' 2) 2-color scale for values 0..1 (red -> green)
+    Dim cs As ColorScale
+    Set cs = rng.FormatConditions.AddColorScale(ColorScaleType:=2)
+    With cs.ColorScaleCriteria(1)
+        .Type = xlConditionValueNumber
+        .Value = 0
+        .FormatColor.Color = RGB(255, 0, 0)     ' red at 0.0
+    End With
+    With cs.ColorScaleCriteria(2)
+        .Type = xlConditionValueNumber
+        .Value = 1
+        .FormatColor.Color = RGB(0, 176, 80)    ' green at 1.0
+    End With
+
+    ' Make header bold and center (optional)
+    With ws.rows(headerRow)
+        .Font.Bold = True
+        .VerticalAlignment = xlCenter
+    End With
+End Sub
+' Reset button: clears highlights, SM values (A2:A…), and search box on INPUT_SHEET!B1
+Public Sub ResetSearch()
+    Dim wsData As Worksheet, wsInstr As Worksheet
+    Dim rng As Range, tgt As Range
+    Dim lastRowA As Long
+    Dim smHeader As String
+
+    On Error GoTo CleanFail
+    Application.ScreenUpdating = False
+
+    Set wsData = ThisWorkbook.Worksheets(DATA_SHEET)
+    Set wsInstr = ThisWorkbook.Worksheets(INPUT_SHEET)
+
+    ' --- Clear formatting & show all rows on DATA sheet ---
+    Set rng = wsData.UsedRange
+    If Not rng Is Nothing Then
+        ' Remember header so it never gets wiped
+        smHeader = CStr(wsData.Cells(1, 1).Value)
+
+        ' Clear in-cell highlights and unhide rows
+        Call ClearSearchFormatting(wsData, rng)
+        rng.EntireRow.Hidden = False
+
+        ' Clear filters (harmless if none)
+        On Error Resume Next
+        If wsData.AutoFilterMode Then wsData.ShowAllData
+        wsData.AutoFilterMode = False
+        On Error GoTo 0
+
+        ' Remove conditional formatting from SM column
+        wsData.Columns(1).FormatConditions.Delete
+
+        ' Clear ONLY SM data cells (keep A1)
+        lastRowA = wsData.Cells(wsData.rows.Count, 1).End(xlUp).Row
+        If lastRowA >= 2 Then
+            wsData.Range(wsData.Cells(2, 1), wsData.Cells(lastRowA, 1)).ClearContents
+        End If
+
+        ' Ensure header remains (default to "SM" if blank)
+        If Len(Trim$(smHeader)) = 0 Then smHeader = "SM"
+        wsData.Cells(1, 1).Value = smHeader
+    End If
+
+    ' --- Clear the search box on INPUT sheet (B1) robustly ---
+    On Error Resume Next
+    Set tgt = wsInstr.Range("B1").MergeArea   ' handles merged cells
+    If tgt Is Nothing Then Set tgt = wsInstr.Range("B1")
+    If wsInstr.ProtectContents Then wsInstr.Unprotect Password:=""
+    tgt.ClearContents
+    On Error GoTo 0
+
+    ' Put the cursor back into B1
+    wsInstr.Activate
+    wsInstr.Range("B1").Select
+
+CleanExit:
+    Application.ScreenUpdating = True
+    Exit Sub
+
+CleanFail:
+    Application.ScreenUpdating = True
+    MsgBox "Reset failed: " & Err.Description, vbExclamation
+End Sub
+' Make sure all rows are visible and no filters are applied
+Private Sub EnsureAllRowsVisibleUnfiltered(ByVal ws As Worksheet)
+    On Error Resume Next
+    ' If an AutoFilter is applied, show all rows
+    If ws.AutoFilterMode Then ws.ShowAllData
+    ws.AutoFilterMode = False
+    On Error GoTo 0
+
+    ' Also unhide any rows hidden by the VBA search
+    If Not ws.UsedRange Is Nothing Then
+        ws.UsedRange.EntireRow.Hidden = False
+    End If
+End Sub
+
+' === Replace hard-coded constants with these getters ===
+
+Private Function GetPythonExePath() As String
+    On Error Resume Next
+    ' Prefer Named Range; fall back to literal cell
+    GetPythonExePath = Trim$(CStr(ThisWorkbook.Worksheets(INPUT_SHEET).Range("PythonExePath").Value))
+    If Len(GetPythonExePath) = 0 Then
+        GetPythonExePath = Trim$(CStr(ThisWorkbook.Worksheets(INPUT_SHEET).Range("B24").Value))
+    End If
+End Function
+
+Private Function GetPyScriptPath() As String
+    On Error Resume Next
+    GetPyScriptPath = Trim$(CStr(ThisWorkbook.Worksheets(INPUT_SHEET).Range("PyScriptPath").Value))
+    If Len(GetPyScriptPath) = 0 Then
+        GetPyScriptPath = Trim$(CStr(ThisWorkbook.Worksheets(INPUT_SHEET).Range("B26").Value))
+    End If
+End Function

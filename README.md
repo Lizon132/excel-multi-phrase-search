@@ -42,3 +42,33 @@ Run the included `ExportAllVBA` macro to export all VBA components back into `vb
 ## 📝 Notes
 - Keep the workbook (`.xlsm`) out of version control; use the `vba-src/` folder as the source of truth.
 - Commit after each export to capture code changes in Git.
+
+## Recent Updates
+
+### ✨ New Features
+- Added **semantic search integration** with Python:
+  - Calls `sm.py` via VBA to generate similarity scores (0.0–1.0).
+  - Writes scores to **SM column (A)** in *Test Docs* sheet.
+  - Applies a red → green gradient to visualize match strength.
+- Added **filter/visibility guard** so Python search always works on the full dataset (ignores prior Excel filters).
+- Added ability to configure **Python.exe path** and **script path** from the **Instructions sheet** (cells B3 and B4).
+  - Falls back to constants if fields are left blank.
+  - Optional **Browse** buttons to make path selection user-friendly.
+
+### 🛠 Improvements
+- Updated **Reset button**:
+  - Clears the search box (Instructions!B1).
+  - Clears all SM values in column A but keeps the **SM** header.
+  - Removes SM conditional formatting.
+  - Restores full row visibility and clears filters.
+- Hardened path validation and error messages for Python/script.
+- Improved `QuoteArg` function for safer command-line argument handling.
+- Consolidated utility helpers to avoid duplicate definitions.
+
+### 📖 Instructions Panel
+- Text box on **Instructions sheet** now explains:
+  1. Enter a search term in **B1**.
+  2. Click **Search** → highlights and filters matches.
+  3. Click **Python Search** → computes semantic scores for all rows.
+  4. Click **Reset** → clears SM values, highlights, and search box.
+  5. Click **Import** → load a CSV into *Test Docs* (SM column is preserved).
