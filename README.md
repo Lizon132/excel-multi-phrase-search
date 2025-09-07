@@ -1,27 +1,41 @@
-# Excel Multi-Phrase Search (VBA)
+# Excel Multi-Phrase Search (VBA + Python Semantic Search)
 
-This project contains exported VBA modules from an Excel workbook that implements:
+This project combines Excel VBA with optional Python semantic matching to provide:
 
-- Multi-phrase search across a worksheet
+- Multi-phrase search across worksheets
 - Highlighting of matching words/phrases with distinct colors
-- CSV import into new worksheets with auto-formatting
-- Export of all VBA modules for version control
+- CSV import into a designated worksheet with auto-formatting
+- Reset and export utilities
+- Optional semantic search with Python for intelligent test case matching
+
+---
 
 ## 📂 Project Structure
 ```
 excel-multi-phrase-search/
-├─ vba-src/              # exported VBA source files
-│  ├─ Module1.bas        # main code (search, import, formatting, export)
-│  ├─ Sheet1.cls         # code-behind for Sheet1
-│  ├─ Sheet2.cls         # code-behind for Sheet2
-│  ├─ Sheet3.cls         # code-behind for Sheet3
-│  └─ ThisWorkbook.cls   # workbook-level events/code
+├─ src/                 # Python source files
+│  ├─ sm.py             # main semantic search script
+│  └─ semanticmatching.py (helper/alternate implementation)
+│
+├─ vba-src/             # exported VBA modules
+│  ├─ Module1.bas
+│  ├─ Sheet1.cls
+│  ├─ Sheet2.cls
+│  ├─ Sheet3.cls
+│  └─ ThisWorkbook.cls
+│
+├─ examples/            # sample Excel workbooks
+│  └─ tests.xlsm
+│
+├─ bin/                 # (expected location for sm.exe after build)
 ├─ README.md
 ├─ .gitignore
 └─ .gitattributes
 ```
 
-> Windows may show `.cls` files as "LaTeX Source File" because of file association, but they are VBA class modules.
+> Windows may show `.cls` files as “LaTeX Source File” due to file associations, but they are VBA class modules.
+
+---
 
 ## 🚀 Usage
 
@@ -29,46 +43,89 @@ excel-multi-phrase-search/
 1. Open or create a `.xlsm` workbook.
 2. Press `Alt+F11` to open the VBA editor.
 3. Right-click the project → **Import File…** and select each `.bas`/`.cls` file from `vba-src/`.
-4. Make sure **File → Options → Trust Center → Macro Settings → "Trust access to the VBA project object model"** is enabled.
+4. Ensure **File → Options → Trust Center → Macro Settings → "Trust access to the VBA project object model"** is enabled.
 
 ### Export from Excel
 Run the included `ExportAllVBA` macro to export all VBA components back into `vba-src/`.
 
 ### Running the Tools
-- **MultiPhraseSearch**: Looks up comma-separated search terms from `Sheet1!C1`, highlights matches in `Sheet2`, and hides non-matching rows.
-- **ResetSearch**: Clears formatting and unhides rows.
-- **ImportCsvToNewSheetFormatted**: Prompts for a CSV, loads it into a new sheet, and auto-formats `Description`, `Expected Result`, and `*Details` columns with word wrap.
+- **MultiPhraseSearch** → Highlights and filters rows in *Test Docs* based on comma-separated terms (Instructions!B1).
+- **ResetSearch** → Clears highlights, resets filters, and wipes SM values (keeps the header).
+- **ImportCsvToTestDocs** → Imports a CSV into the *Test Docs* sheet and preserves SM column.
+- **SearchWithPython** → Runs semantic search via `sm.exe` and updates SM column with scores (0.0–1.0) color-coded red → green.
+
+---
+
+## ✨ Features & Improvements
+
+- **Semantic search integration**:
+  - Calls `sm.py` (or compiled `sm.exe`) to generate similarity scores.
+  - Scores populate column **A (SM)** with conditional formatting.
+  - Always runs against the full dataset (ignores active filters).
+- **Reset button enhancements**:
+  - Clears the search box (Instructions!B1).
+  - Wipes SM values but preserves header.
+  - Removes conditional formatting and unhides rows.
+- **Cleaner utilities**:
+  - Unified `QuoteArg` helper for safe command-line calls.
+  - Consolidated duplicate functions.
+  - Stronger validation for paths and missing binaries.
+
+---
+
+## 🔧 Building the Semantic Matching Executable
+
+This project integrates with a Python backend for semantic search.  
+The backend can be compiled into a standalone `sm.exe` so end users don’t need Python installed.
+
+### Requirements
+- Python 3.9+ (tested with 3.12)
+- Packages:
+  ```
+  pip install sentence-transformers torch pandas
+  ```
+- PyInstaller:
+  ```
+  pip install pyinstaller
+  ```
+
+### Build Instructions
+From the project root:
+
+```bash
+py -m PyInstaller --onefile --name sm src/sm.py
+```
+
+This will create:
+
+```
+dist/sm.exe
+```
+
+Move `sm.exe` into:
+
+```
+bin/sm.exe
+```
+
+so Excel can locate it.  
+If using `examples/tests.xlsm`, the VBA expects `..\bin\sm.exe` relative to the workbook’s folder.
+
+---
+
+## 📖 Instructions Panel (in Excel)
+
+On the **Instructions sheet**:
+
+1. Enter a search term in **B1**.
+2. **Search** → highlights and filters matching rows.
+3. **Python Search** → runs semantic scoring across all rows (ignores filters).
+4. **Reset** → clears SM column, highlights, filters, and search box.
+5. **Import** → load a CSV into *Test Docs* (SM column is preserved).
+
+---
 
 ## 📝 Notes
-- Keep the workbook (`.xlsm`) out of version control; use the `vba-src/` folder as the source of truth.
-- Commit after each export to capture code changes in Git.
-
-## Recent Updates
-
-### ✨ New Features
-- Added **semantic search integration** with Python:
-  - Calls `sm.py` via VBA to generate similarity scores (0.0–1.0).
-  - Writes scores to **SM column (A)** in *Test Docs* sheet.
-  - Applies a red → green gradient to visualize match strength.
-- Added **filter/visibility guard** so Python search always works on the full dataset (ignores prior Excel filters).
-- Added ability to configure **Python.exe path** and **script path** from the **Instructions sheet** (cells B24 and B26).
-  - Falls back to constants if fields are left blank.
-  - Optional **Browse** buttons to make path selection user-friendly.
-
-### 🛠 Improvements
-- Updated **Reset button**:
-  - Clears the search box (Instructions!B1).
-  - Clears all SM values in column A but keeps the **SM** header.
-  - Removes SM conditional formatting.
-  - Restores full row visibility and clears filters.
-- Hardened path validation and error messages for Python/script.
-- Improved `QuoteArg` function for safer command-line argument handling.
-- Consolidated utility helpers to avoid duplicate definitions.
-
-### 📖 Instructions Panel
-- Text box on **Instructions sheet** now explains:
-  1. Enter a search term in **B1**.
-  2. Click **Search** → highlights and filters matches.
-  3. Click **Python Search** → computes semantic scores for all rows.
-  4. Click **Reset** → clears SM values, highlights, and search box.
-  5. Click **Import** → load a CSV into *Test Docs* (SM column is preserved).
+- Do not commit compiled binaries (`sm.exe`) — only sources.  
+- Use `vba-src/` as the source of truth for macros.  
+- For reproducibility, commit after each `ExportAllVBA`.  
