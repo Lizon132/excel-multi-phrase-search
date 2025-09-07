@@ -1,13 +1,26 @@
-# Excel temp/lock/backup files
-~$*.xls*
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# PyInstaller
+build/
+dist/
+*.spec
+
+# Binaries / exe
+bin/
+*.exe
+*.dll
+
+# Logs / caches
+*.log
 *.tmp
-*.bak
+.cache/
+pip-wheel-metadata/
 
-# Ignore compiled workbook artifacts (keep source only)
-*.xlsm
-*.xlsb
-
-# IDE/editor/system noise
-.vscode/
-.DS_Store
-Thumbs.db
+# Excel temp
+~$*.xls*
