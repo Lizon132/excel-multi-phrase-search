@@ -1,0 +1,165 @@
+' Build the command for sm.exe (CSV-based)
+Private Function BuildSmExeCmd(ByVal smExe As String, _
+                               ByVal query As String, _
+                               ByVal inCsv As String, _
+                               ByVal outCsv As String) As String
+    BuildSmExeCmd = QuoteArg(smExe) & _
+                    " --query " & QuoteArg(query) & _
+                    " --in "    & QuoteArg(inCsv)  & _
+                    " --out "   & QuoteArg(outCsv)
+End Function
+
+' Build the command for python.exe sm.py (Excel/CSV hybrid or CSV-only, depending on your sm.py)
+Private Function BuildPythonCmd(ByVal pyExe As String, _
+                                ByVal pyScript As String, _
+                                ByVal query As String, _
+                                ByVal inCsv As String, _
+                                ByVal outCsv As String, _
+                                Optional ByVal workbookPath As String = "", _
+                                Optional ByVal sheetName As String = "") As String
+    Dim cmd As String
+    cmd = QuoteArg(pyExe) & " " & QuoteArg(pyScript) & _
+          " --query " & QuoteArg(query)
+
+    ' If your sm.py accepts CSV in/out flags, use them:
+    cmd = cmd & " --in " & QuoteArg(inCsv) & " --out " & QuoteArg(outCsv)
+
+    ' If your sm.py also supports writing back into the workbook, keep these (harmless if ignored):
+    If Len(workbookPath) > 0 Then cmd = cmd & " --workbook " & QuoteArg(workbookPath)
+    If Len(sheetName) > 0 Then cmd = cmd & " --sheet " & QuoteArg(sheetName)
+
+    BuildPythonCmd = cmd
+End Function
+
+' Locate sm.exe (preferred: ..\bin\sm.exe relative to the workbook) or from Instructions!B24 / named range SemanticExePath
+Private Function GetSemanticExePath() As String
+    Dim ws As Worksheet, p As String, localBin As String, abs As String
+    Set ws = ThisWorkbook.Worksheets("Instructions")
+
+    localBin = ThisWorkbook.Path & "\..\bin\sm.exe"
+    On Error Resume Next
+    abs = CreateObject("Scripting.FileSystemObject").GetAbsolutePathName(localBin)
+    On Error GoTo 0
+    If Len(abs) > 0 And Dir(abs) <> "" Then
+        GetSemanticExePath = abs
+        Exit Function
+    End If
+
+    On Error Resume Next
+    p = Trim$(CStr(ws.Range("SemanticExePath").Value)) ' optional named range
+    If Len(p) = 0 Then p = Trim$(CStr(ws.Range("B24").Value))
+    On Error GoTo 0
+    GetSemanticExePath = p
+End Function
+
+' Locate python.exe from Instructions!B25 / named range PythonExePath (or hardcode if you prefer)
+Private Function GetPythonExePath() As String
+    Dim ws As Worksheet: Set ws = ThisWorkbook.Worksheets("Instructions")
+    On Error Resume Next
+    GetPythonExePath = Trim$(CStr(ws.Range("PythonExePath").Value))
+    If Len(GetPythonExePath) = 0 Then GetPythonExePath = Trim$(CStr(ws.Range("B25").Value))
+    On Error GoTo 0
+End Function
+
+' Locate sm.py from Instructions!B26 / named range PyScriptPath
+Private Function GetPyScriptPath() As String
+    Dim ws As Worksheet: Set ws = ThisWorkbook.Worksheets("Instructions")
+    On Error Resume Next
+    GetPyScriptPath = Trim$(CStr(ws.Range("PyScriptPath").Value))
+    If Len(GetPyScriptPath) = 0 Then GetPyScriptPath = Trim$(CStr(ws.Range("B26").Value))
+    On Error GoTo 0
+End Function
+
+
+Public Sub SearchWithPython()
+    Dim wsInstr As Worksheet, wsData As Worksheet
+    Dim query As String
+    Dim inCsv As String, outCsv As String
+    Dim smExe As String, pyExe As String, pyScript As String
+    Dim cmd As String, rc As Long, logPath As String
+    Dim ok As Boolean
+
+    On Error GoTo Fail
+    Application.ScreenUpdating = False
+
+    Set wsInstr = ThisWorkbook.Worksheets("Instructions")
+    Set wsData  = ThisWorkbook.Worksheets("Test Docs")
+
+    ' Ensure the dataset is fully visible before scoring
+    EnsureAllRowsVisibleUnfiltered wsData
+
+    ' Get query
+    query = Trim$(CStr(wsInstr.Range("B1").Value))
+    If Len(query) = 0 Then
+        MsgBox "Enter search text in Instructions!B1", vbInformation
+        GoTo CleanExit
+    End If
+
+    ' Prepare temp CSV paths
+    inCsv  = MakeTempPath("sm_in_", ".csv")
+    outCsv = MakeTempPath("sm_out_", ".csv")
+
+    ' Export B..last used as CSV
+    ExportDataSheetToCsv wsData, inCsv
+
+    ' ----- Try sm.exe first -----
+    smExe = GetSemanticExePath()
+    If Len(smExe) > 0 And Dir(smExe) <> "" Then
+        cmd = BuildSmExeCmd(smExe, query, inCsv, outCsv)
+        rc = RunWithLog(cmd, logPath, 1)  ' 1 = show window for easier debugging
+        If rc = 0 And Dir(outCsv) <> "" Then
+            GoTo ImportAndColor
+        Else
+            ' Show why exe failed, then try Python fallback
+            MsgBox "sm.exe failed (exit " & rc & ")." & vbCrLf & "See: " & logPath, vbExclamation
+        End If
+    End If
+
+    ' ----- Fallback: python.exe sm.py -----
+    pyExe = GetPythonExePath()
+    pyScript = GetPyScriptPath()
+
+    If Len(pyExe) = 0 Or Dir(pyExe) = "" Then
+        MsgBox "Python.exe not found. Set Instructions!B25 (or named range PythonExePath).", vbExclamation
+        GoTo CleanExit
+    End If
+    If Len(pyScript) = 0 Or Dir(pyScript) = "" Then
+        MsgBox "sm.py not found. Set Instructions!B26 (or named range PyScriptPath).", vbExclamation
+        GoTo CleanExit
+    End If
+
+    cmd = BuildPythonCmd(pyExe, pyScript, query, inCsv, outCsv, ThisWorkbook.FullName, "Test Docs")
+    rc = RunWithLog(cmd, logPath, 1)
+    If rc <> 0 Or Dir(outCsv) = "" Then
+        MsgBox "Python sm.py failed (exit " & rc & ")." & vbCrLf & "See: " & logPath, vbExclamation
+        GoTo CleanExit
+    End If
+
+ImportAndColor:
+    ' Pull scores into A2:A… and color the gradient
+    ImportScoresToColumnA wsData, outCsv
+    ApplySMFormatting wsData, headerRow:=1, smCol:=1
+    MsgBox "Semantic search complete. SM values updated.", vbInformation
+
+CleanExit:
+    On Error Resume Next
+    Kill inCsv: Kill outCsv
+    On Error GoTo 0
+    Application.ScreenUpdating = True
+    Exit Sub
+
+Fail:
+    Application.ScreenUpdating = True
+    MsgBox "Search failed: " & Err.Description, vbExclamation
+End Sub
+
+' Run cmd via cmd.exe, capture stdout+stderr to a temp log; return exit code
+Private Function RunWithLog(ByVal cmd As String, ByRef logPath As String, _
+                            Optional ByVal showWindow As Integer = 0) As Long
+    Dim sh As Object
+    Set sh = CreateObject("WScript.Shell")
+    logPath = Environ$("TEMP") & "\sm_log_" & Format(Now, "yyyymmdd_hhnnss") & ".txt"
+    ' capture stdout/stderr
+    cmd = cmd & " > " & QuoteArg(logPath) & " 2>&1"
+    RunWithLog = sh.Run(Environ$("ComSpec") & " /c " & cmd, showWindow, True)
+End Function
